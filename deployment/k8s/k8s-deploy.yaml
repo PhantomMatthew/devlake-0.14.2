@@ -1,0 +1,228 @@
+#    Licensed to the Apache Software Foundation (ASF) under one or more
+#    contributor license agreements.  See the NOTICE file distributed with
+#    this work for additional information regarding copyright ownership.
+#    The ASF licenses this file to You under the Apache License, Version 2.0
+#    (the "License"); you may not use this file except in compliance with
+#    the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devlake
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devlake-config
+  namespace: devlake
+data:
+  # shared between deployment
+  MYSQL_USER: merico
+  MYSQL_PASSWORD: merico
+  MYSQL_DATABASE: lake
+  MYSQL_ROOT_PASSWORD: admin
+  MYSQL_URL: mysql:3306
+  # grafana deployment
+  GF_SERVER_ROOT_URL: http://YOURDOMAIN:30002/grafana
+  # for devlake deployment
+  DB_URL: mysql://merico:merico@mysql:3306/lake?charset=utf8mb4&parseTime=True
+  DEVLAKE_ENDPOINT: devlake.devlake.svc.cluster.local:8080
+  GRAFANA_ENDPOINT: grafana.devlake.svc.cluster.local:3000
+  # ADMIN_USER: devlake
+  # ADMIN_PASS: merico
+  LOGGING_DIR: /app/logs
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: devlake
+  labels:
+    app: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0.26
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3306
+          envFrom:
+            - configMapRef:
+                name: devlake-config
+          volumeMounts:
+            - mountPath: /var/lib/mysql
+              name: data
+      volumes:
+        - name: data
+          hostPath:
+            path: /var/lib/mysql
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: devlake
+spec:
+  selector:
+    app: mysql
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: devlake
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: apache/devlake-dashboard:latest
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: devlake-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: devlake
+spec:
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+      nodePort: 30002
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-ui
+  namespace: devlake
+  labels:
+    app: config-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: config-ui
+  template:
+    metadata:
+      labels:
+        app: config-ui
+    spec:
+      containers:
+        - name: config-ui
+          image: apache/devlake-config-ui:latest
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef:
+                name: devlake-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-ui
+  namespace: devlake
+spec:
+  type: NodePort
+  selector:
+    app: config-ui
+  ports:
+    - protocol: TCP
+      port: 4000
+      targetPort: 4000
+      nodePort: 30004
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devlake
+  namespace: devlake
+  labels:
+    app: devlake
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devlake
+  template:
+    metadata:
+      labels:
+        app: devlake
+    spec:
+      containers:
+        - name: devlake
+          image: apache/devlake:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: devlake-config
+          volumeMounts:
+            - name: config
+              mountPath: "/app/.env"
+      volumes:
+        - name: configdir
+          hostPath:
+            path: /var/lib/devlake
+            type: DirectoryOrCreate
+        - name: config
+          hostPath:
+            path: /var/lib/devlake/env
+            type: FileOrCreate
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devlake
+  namespace: devlake
+spec:
+  selector:
+    app: devlake
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
